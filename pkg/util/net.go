@@ -102,21 +102,65 @@ func CIDRConflict(a, b string) bool {
 }
 
 func CIDRContainIP(cidrStr, ipStr string) bool {
-	_, cidr, err := net.ParseCIDR(cidrStr)
-	if err != nil {
-		return false
+	protocol := CheckProtocol(cidrStr)
+	if protocol == kubeovnv1.ProtocolDual {
+		cidrBlocks := strings.Split(cidrStr, ",")
+		_, v4CIDR, err := net.ParseCIDR(cidrBlocks[0])
+		if err != nil {
+			return false
+		}
+		_, v6CIDR, err := net.ParseCIDR(cidrBlocks[1])
+		if err != nil {
+			return false
+		}
+		v4CIDRStr := cidrBlocks[0]
+		v6CIDRStr := cidrBlocks[1]
+
+		ips := strings.Split(ipStr, ",")
+		if len(ips) == 2 {
+			// The format of ipStr may be 10.244.0.0/16,fd00:10:244::/64 when protocol is dualstack
+			if CheckProtocol(v4CIDRStr) != CheckProtocol(ips[0]) || CheckProtocol(v6CIDRStr) != CheckProtocol(ips[1]) {
+				return false
+			}
+
+			v4IP := net.ParseIP(ips[0])
+			v6IP := net.ParseIP(ips[1])
+			if v4IP == nil || v6IP == nil {
+				return false
+			}
+			return v4CIDR.Contains(v4IP) && v6CIDR.Contains(v6IP)
+		} else {
+			if CheckProtocol(v4CIDRStr) != CheckProtocol(ipStr) && CheckProtocol(v6CIDRStr) != CheckProtocol(ipStr) {
+				return false
+			}
+
+			ip := net.ParseIP(ipStr)
+			if ip == nil {
+				return false
+			}
+			return v4CIDR.Contains(ip) || v6CIDR.Contains(ip)
+		}
+	} else {
+		_, cidr, err := net.ParseCIDR(cidrStr)
+		if err != nil {
+			return false
+		}
+		if CheckProtocol(cidrStr) != CheckProtocol(ipStr) {
+			return false
+		}
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			return false
+		}
+		return cidr.Contains(ip)
 	}
-	if CheckProtocol(cidrStr) != CheckProtocol(ipStr) {
-		return false
-	}
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-	return cidr.Contains(ip)
 }
 
 func CheckProtocol(address string) string {
+	if strings.Contains(address, ",") {
+		return kubeovnv1.ProtocolDual
+	}
+
 	address = strings.Split(address, "/")[0]
 	ip := net.ParseIP(address)
 	if ip.To4() != nil {
@@ -143,4 +187,11 @@ func GenerateRandomV4IP(cidr string) string {
 	}
 	t := big.NewInt(0).Add(Ip2BigInt(ip), add)
 	return fmt.Sprintf("%s/%d", BigInt2Ip(t), netMask)
+}
+
+func IsValidIP(ip string) bool {
+	if net.ParseIP(ip) != nil {
+		return true
+	}
+	return false
 }
