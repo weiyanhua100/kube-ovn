@@ -153,37 +153,36 @@ func (c Client) CreatePort(ls, port, ip, cidr, mac, tag string, portSecurity boo
 
 func (c Client) SetLogicalSwitchConfig(ls, lr, protocol, subnet, gateway string, excludeIps []string) error {
 	var err error
-	mask := strings.Split(subnet, "/")[1]
-	switch protocol {
-	case kubeovnv1.ProtocolIPv4:
-		_, err = c.ovnNbCommand(MayExist, "ls-add", ls, "--",
-			"set", "logical_switch", ls, fmt.Sprintf("other_config:subnet=%s", subnet), "--",
-			"set", "logical_switch", ls, fmt.Sprintf("other_config:gateway=%s", gateway), "--",
-			"set", "logical_switch", ls, fmt.Sprintf("other_config:exclude_ips=%s", strings.Join(excludeIps, " ")), "--",
-			"set", "logical_router_port", fmt.Sprintf("%s-%s", lr, ls), fmt.Sprintf("networks=%s/%s", gateway, mask))
-	case kubeovnv1.ProtocolIPv6:
-		gateway := strings.ReplaceAll(gateway, ":", "\\:")
-		_, err = c.ovnNbCommand(MayExist, "ls-add", ls, "--",
-			"set", "logical_switch", ls, fmt.Sprintf("other_config:ipv6_prefix=%s", strings.Split(subnet, "/")[0]), "--",
-			"set", "logical_switch", ls, fmt.Sprintf("other_config:gateway=%s", gateway), "--",
-			"set", "logical_switch", ls, fmt.Sprintf("other_config:exclude_ips=%s", strings.Join(excludeIps, " ")), "--",
-			"set", "logical_router_port", fmt.Sprintf("%s-%s", lr, ls), fmt.Sprintf("networks=%s/%s", gateway, mask))
-	case kubeovnv1.ProtocolDual:
-		var ip string
-		cidrBlocks := strings.Split(subnet, ",")
-		gws := strings.Split(gateway, ",")
-		v4Mask := strings.Split(cidrBlocks[0], "/")[1]
-		v6Mask := strings.Split(cidrBlocks[1], "/")[1]
-		ip = gws[0] + "/" + v4Mask + "," + gws[1] + "/" + v6Mask
-		// ipStr := strings.Join(strings.Split(ip, ","), " ")
-		ipStr := strings.Split(ip, ",")
-		// networks should be modified to satisfy dual stack
+	cidrBlocks := strings.Split(subnet, ",")
+	mask := strings.Split(cidrBlocks[0], "/")[1]
+	gws := strings.Split(gateway, ",")
+	v4Networks := gws[0] + "/" + mask
+	v6Cidr := cidrBlocks[0]
+	v6Gw := gws[0]
+	v6Mask := strings.Split(cidrBlocks[0], "/")[1]
+
+	v4ExcludeIps, v6ExcludeIps := util.SplitIpsByProtocol(excludeIps)
+	if protocol == kubeovnv1.ProtocolDual {
+		v6Cidr = cidrBlocks[1]
+		v6Gw = gws[1]
+		v6Mask = strings.Split(cidrBlocks[1], "/")[1]
+	}
+
+	if protocol == kubeovnv1.ProtocolDual || protocol == kubeovnv1.ProtocolIPv4 {
 		_, err = c.ovnNbCommand(MayExist, "ls-add", ls, "--",
 			"set", "logical_switch", ls, fmt.Sprintf("other_config:subnet=%s", cidrBlocks[0]), "--",
-			"set", "logical_switch", ls, fmt.Sprintf("other_config:gateway=%s", gateway), "--",
-			"set", "logical_switch", ls, fmt.Sprintf("other_config:exclude_ips=%s", strings.Join(excludeIps, " ")), "--",
-			"set", "logical_switch", ls, fmt.Sprintf("other_config:ipv6_prefix=%s", strings.Split(cidrBlocks[1], "/")[0]), "--",
-			"set", "logical_router_port", fmt.Sprintf("%s-%s", lr, ls), fmt.Sprintf("networks=%s", ipStr[0]))
+			"set", "logical_switch", ls, fmt.Sprintf("other_config:gateway=%s", gws[0]), "--",
+			"set", "logical_switch", ls, fmt.Sprintf("other_config:exclude_ips=%s", strings.Join(v4ExcludeIps, " ")), "--",
+			"set", "logical_router_port", fmt.Sprintf("%s-%s", lr, ls), fmt.Sprintf("networks=%s", v4Networks))
+	}
+
+	if protocol == kubeovnv1.ProtocolDual || protocol == kubeovnv1.ProtocolIPv6 {
+		v6Gw = strings.ReplaceAll(v6Gw, ":", "\\:")
+		_, err = c.ovnNbCommand(MayExist, "ls-add", ls, "--",
+			"set", "logical_switch", ls, fmt.Sprintf("other_config:ipv6_prefix=%s", strings.Split(v6Cidr, "/")[0]), "--",
+			"set", "logical_switch", ls, fmt.Sprintf("other_config:gateway=%s", v6Gw), "--",
+			"set", "logical_switch", ls, fmt.Sprintf("other_config:exclude_ips=%s", strings.Join(v6ExcludeIps, " ")), "--",
+			"set", "logical_router_port", fmt.Sprintf("%s-%s", lr, ls), fmt.Sprintf("networks=%s/%s", v6Gw, v6Mask))
 	}
 
 	if err != nil {
@@ -208,6 +207,7 @@ func (c Client) CreateLogicalSwitch(ls, lr, protocol, subnet, gateway string, ex
 			"set", "logical_switch", ls, fmt.Sprintf("other_config:gateway=%s", gateway), "--",
 			"set", "logical_switch", ls, fmt.Sprintf("other_config:exclude_ips=%s", strings.Join(excludeIps, " ")))
 	case kubeovnv1.ProtocolDual:
+		// gateway is not offical column, which is used for private
 		cidrBlocks := strings.Split(subnet, ",")
 		_, err = c.ovnNbCommand(MayExist, "ls-add", ls, "--",
 			"set", "logical_switch", ls, fmt.Sprintf("other_config:subnet=%s", cidrBlocks[0]), "--",

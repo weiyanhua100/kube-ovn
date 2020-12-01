@@ -95,6 +95,7 @@ func ValidateSubnet(subnet kubeovnv1.Subnet) error {
 		}
 	}
 
+	// The allow subnets should add adaption for dualstack
 	allow := subnet.Spec.AllowSubnets
 	for _, cidr := range allow {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {
@@ -121,8 +122,7 @@ func ValidatePodNetwork(annotations map[string]string) error {
 		// The format of IP Annotation in dualstack is 10.244.0.0/16,fd00:10:244:0:2::/80
 		for _, ip := range strings.Split(ipAddress, ",") {
 			if strings.Contains(ip, "/") {
-				_, _, err := net.ParseCIDR(ip)
-				if err != nil {
+				if _, _, err := net.ParseCIDR(ip); err != nil {
 					return fmt.Errorf("%s is not a valid %s", ip, IpAddressAnnotation)
 				}
 			} else {
@@ -134,25 +134,16 @@ func ValidatePodNetwork(annotations map[string]string) error {
 			if cidrStr := annotations[CidrAnnotation]; cidrStr != "" {
 				protocol := CheckProtocol(cidrStr)
 				if protocol == kubeovnv1.ProtocolDual {
+					if _, _, err := CheckDualCidrs(cidrStr); err != nil {
+						return err
+					}
+
 					cidrBlocks := strings.Split(cidrStr, ",")
-
-					_, _, err := net.ParseCIDR(cidrBlocks[0])
-					if err != nil {
-						return fmt.Errorf("invalid cidr %s", cidrBlocks[0])
-					}
-					_, _, err = net.ParseCIDR(cidrBlocks[1])
-					if err != nil {
-						return fmt.Errorf("invalid cidr %s", cidrBlocks[1])
-					}
-					v4CIDR := cidrBlocks[0]
-					v6CIDR := cidrBlocks[1]
-
-					if !CIDRContainIP(v4CIDR, ip) && !CIDRContainIP(v6CIDR, ip) {
+					if !CIDRContainIP(cidrBlocks[0], ip) && !CIDRContainIP(cidrBlocks[1], ip) {
 						return fmt.Errorf("%s not in cidr %s", ip, cidrStr)
 					}
 				} else {
-					_, _, err := net.ParseCIDR(cidrStr)
-					if err != nil {
+					if _, _, err := net.ParseCIDR(cidrStr); err != nil {
 						return fmt.Errorf("invalid cidr %s", cidrStr)
 					}
 					if !CIDRContainIP(cidrStr, ip) {

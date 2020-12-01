@@ -2,7 +2,6 @@ package ipam
 
 import (
 	"math/big"
-	"net"
 	"strings"
 
 	"github.com/alauda/kube-ovn/pkg/util"
@@ -167,26 +166,4 @@ func splitRange(a, b *IPRange) IPRangeList {
 	ipr1 := IPRange{Start: a.Start, End: b.Start.Add(-1)}
 	ipr2 := IPRange{Start: b.End.Add(1), End: a.End}
 	return IPRangeList{&ipr1, &ipr2}
-}
-
-func splitIpsByProtocol(excludeIps []string) ([]string, []string) {
-	var v4ExcludeIps, v6ExcludeIps []string
-	for _, ex := range excludeIps {
-		ips := strings.Split(ex, "..")
-		if len(ips) == 1 {
-			if net.ParseIP(ips[0]).To4() != nil {
-				v4ExcludeIps = append(v4ExcludeIps, ips[0])
-			} else {
-				v6ExcludeIps = append(v6ExcludeIps, ips[0])
-			}
-		} else {
-			if net.ParseIP(ips[0]).To4() != nil {
-				v4ExcludeIps = append(v4ExcludeIps, ex)
-			} else {
-				v6ExcludeIps = append(v6ExcludeIps, ex)
-			}
-		}
-	}
-
-	return v4ExcludeIps, v6ExcludeIps
 }

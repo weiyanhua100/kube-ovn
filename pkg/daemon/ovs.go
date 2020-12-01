@@ -35,12 +35,10 @@ func (csh cniServerHandler) configureNic(podName, podNamespace, netns, container
 		}
 	}
 
-	// How to adapt dualstack for ovs config
 	var ipStr string
 	if util.CheckProtocol(gateway) == kubeovnv1.ProtocolDual {
 		ips := strings.Split(ip, ",")
-		// ipStr = strings.Split(ips[0], "/")[0] + "," + strings.Split(ips[1], "/")[0]
-		ipStr = strings.Split(ips[0], "/")[0]
+		ipStr = strings.Split(ips[0], "/")[0] + "," + strings.Split(ips[1], "/")[0]
 	} else {
 		ipStr = strings.Split(ip, "/")[0]
 	}
@@ -252,15 +250,12 @@ func waiteNetworkReady(gateway string) error {
 }
 
 func configureNodeNic(portName, ip, gw string, macAddr net.HardwareAddr, mtu int) error {
-	var ipStr, ipAddr string
+	var ipStr string
 	if util.CheckProtocol(ip) == kubeovnv1.ProtocolDual {
 		ips := strings.Split(ip, ",")
 		ipStr = strings.Split(ips[0], "/")[0] + "," + strings.Split(ips[1], "/")[0]
-		// Do not adapt dualstack for node, just use v4 address now
-		ipAddr = ips[0]
 	} else {
 		ipStr = strings.Split(ip, "/")[0]
-		ipAddr = ip
 	}
 
 	raw, err := ovs.Exec(ovs.MayExist, "add-port", "br-int", util.NodeNic, "--",
@@ -272,8 +267,7 @@ func configureNodeNic(portName, ip, gw string, macAddr net.HardwareAddr, mtu int
 		return fmt.Errorf(raw)
 	}
 
-	// Do not adapt dualstack for node, because there is no environment to test now
-	if err = configureNic(util.NodeNic, ipAddr, macAddr, mtu); err != nil {
+	if err = configureNic(util.NodeNic, ip, macAddr, mtu); err != nil {
 		return err
 	}
 
@@ -290,12 +284,11 @@ func configureNodeNic(portName, ip, gw string, macAddr net.HardwareAddr, mtu int
 	var output []byte
 	protocol := util.CheckProtocol(gw)
 	if protocol == kubeovnv1.ProtocolDual {
-		gwStr := strings.Split(gw, ",")[0]
-		output, _ = exec.Command("ping", "-w", "10", gwStr).CombinedOutput()
+		gws := strings.Split(gw, ",")
+		output, _ = exec.Command("ping", "-w", "10", gws[0]).CombinedOutput()
 		klog.Infof("ping v4 gw result is: \n %s", output)
 
-		gwStr = strings.Split(gw, ",")[1]
-		output, _ = exec.Command("ping", "-6", "-w", "10", gwStr).CombinedOutput()
+		output, _ = exec.Command("ping", "-6", "-w", "10", gws[1]).CombinedOutput()
 		klog.Infof("ping v6 gw result is: \n %s", output)
 	} else if protocol == kubeovnv1.ProtocolIPv4 {
 		output, _ = exec.Command("ping", "-w", "10", gw).CombinedOutput()
@@ -355,30 +348,45 @@ func configureNic(link, ip string, macAddr net.HardwareAddr, mtu int) error {
 	if err != nil {
 		return fmt.Errorf("can not find nic %s %v", link, err)
 	}
-
-	// It's an err to call AddrReplace twice for ovn0. So how to adjust?
-	var ipAddr, v4Addr, v6Addr *netlink.Addr
-	if util.CheckProtocol(ip) == kubeovnv1.ProtocolDual {
-		ips := strings.Split(ip, ",")
-		v4Addr, err = netlink.ParseAddr(ips[0])
-		v6Addr, err = netlink.ParseAddr(ips[1])
-	} else {
-		ipAddr, err = netlink.ParseAddr(ip)
-	}
+	ipDelMap := make(map[string]netlink.Addr)
+	ipAddMap := make(map[string]netlink.Addr)
+	ipAddrs, err := netlink.AddrList(nodeLink, 0x0)
 	if err != nil {
-		return fmt.Errorf("can not parse %s %v", ip, err)
+		return fmt.Errorf("can not get addr %s %v", nodeLink, err)
+	}
+	klog.Infof("configureNic link %v, ipAddrs %v", link, ipAddrs)
+	for _, ipAddr := range ipAddrs {
+		if strings.HasPrefix(ipAddr.IP.String(), "fe80::") {
+			continue
+		}
+		ipDelMap[ipAddr.IP.String()+"/"+ipAddr.Mask.String()] = ipAddr
 	}
 
-	if util.CheckProtocol(ip) == kubeovnv1.ProtocolDual {
-		if err = netlink.AddrAdd(nodeLink, v4Addr); err != nil {
-			return fmt.Errorf("can not add v4 address to nic %s, %v", link, err)
+	for _, ipStr := range strings.Split(ip, ",") {
+		if _, ok := ipDelMap[ipStr]; ok {
+			delete(ipDelMap, ipStr)
+			continue
 		}
-		if err = netlink.AddrAdd(nodeLink, v6Addr); err != nil {
-			return fmt.Errorf("can not add v6 address to nic %s, %v", link, err)
+
+		ipAddr, err := netlink.ParseAddr(ipStr)
+		if err != nil {
+			return fmt.Errorf("can not parse %s %v", ipStr, err)
 		}
-	} else {
-		if err = netlink.AddrReplace(nodeLink, ipAddr); err != nil {
-			return fmt.Errorf("can not add address to nic %s, %v", link, err)
+		ipAddMap[ipStr] = *ipAddr
+	}
+	klog.Infof("configureNic link %v, del Addrs %v", link, ipDelMap)
+	for _, addr := range ipDelMap {
+		ipDel := addr
+		if err = netlink.AddrDel(nodeLink, &ipDel); err != nil {
+			return fmt.Errorf("delete address %s %v", addr, err)
+		}
+	}
+
+	klog.Infof("configureNic link %v, add Addrs %v", link, ipAddMap)
+	for _, addr := range ipAddMap {
+		ipAdd := addr
+		if err = netlink.AddrAdd(nodeLink, &ipAdd); err != nil {
+			return fmt.Errorf("can not add address %v to nic %s, %v", addr, link, err)
 		}
 	}
 

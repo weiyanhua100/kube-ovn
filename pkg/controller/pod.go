@@ -486,6 +486,8 @@ func (c *Controller) handleUpdatePod(key string) error {
 
 	klog.Infof("update pod %s/%s", namespace, name)
 	podIP := pod.Annotations[util.IpAddressAnnotation]
+	v4IPStr := podIP
+	v6IPStr := podIP
 
 	subnet, err := c.getPodDefaultSubnet(pod)
 	if err != nil {
@@ -530,9 +532,19 @@ func (c *Controller) handleUpdatePod(key string) error {
 						return err
 					}
 
-					if err := c.ovnClient.AddStaticRoute(ovs.PolicySrcIP, podIP, nodeTunlIPAddr.String(), c.config.ClusterRouter); err != nil {
+					if util.CheckProtocol(podIP) == kubeovnv1.ProtocolDual {
+						v4IPStr = strings.Split(podIP, ",")[0]
+						v6IPStr = strings.Split(podIP, ",")[1]
+					}
+					if err := c.ovnClient.AddStaticRoute(ovs.PolicySrcIP, v4IPStr, nodeTunlIPAddr[0].String(), c.config.ClusterRouter); err != nil {
 						klog.Errorf("failed to add static route, %v", err)
 						return err
+					}
+					if len(nodeTunlIPAddr) == 2 {
+						if err := c.ovnClient.AddStaticRoute(ovs.PolicySrcIP, v6IPStr, nodeTunlIPAddr[1].String(), c.config.ClusterRouter); err != nil {
+							klog.Errorf("failed to add v6 static route, %v", err)
+							return err
+						}
 					}
 				}
 
@@ -549,7 +561,7 @@ func (c *Controller) handleUpdatePod(key string) error {
 				return err
 			}
 
-			if err := c.ovnClient.UpdateNatRule("snat", podIP, pod.Annotations[util.SnatAnnotation], c.config.ClusterRouter); err != nil {
+			if err := c.ovnClient.UpdateNatRule("snat", v4IPStr, pod.Annotations[util.SnatAnnotation], c.config.ClusterRouter); err != nil {
 				klog.Errorf("failed to add nat rules, %v", err)
 				return err
 			}
