@@ -187,7 +187,7 @@ spec:
       hostNetwork: true
       containers:
         - name: ovn-central
-          image: "kubeovn/kube-ovn:v1.5.0"
+          image: "kubeovn/kube-ovn:v1.5.2"
           imagePullPolicy: IfNotPresent
           command: ["/kube-ovn/start-db.sh"]
           securityContext:
@@ -213,7 +213,10 @@ spec:
           resources:
             requests:
               cpu: 500m
-              memory: 300Mi
+              memory: 200Mi
+            limits:
+              cpu: 3
+              memory: 3Gi
           volumeMounts:
             - mountPath: /var/run/openvswitch
               name: host-run-ovs
@@ -307,7 +310,7 @@ spec:
       hostPID: true
       containers:
         - name: openvswitch
-          image: "kubeovn/kube-ovn:v1.5.0"
+          image: "kubeovn/kube-ovn:v1.5.2"
           imagePullPolicy: IfNotPresent
           command: ["/kube-ovn/start-ovs.sh"]
           securityContext:
@@ -366,7 +369,7 @@ spec:
           resources:
             requests:
               cpu: 200m
-              memory: 300Mi
+              memory: 200Mi
             limits:
               cpu: 1000m
               memory: 800Mi

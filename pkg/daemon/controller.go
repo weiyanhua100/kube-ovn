@@ -194,8 +194,7 @@ func (c *Controller) reconcileRouters() error {
 		klog.Errorf("failed to list namespace %v", err)
 		return err
 	}
-	cidrs := make([]string, 0, len(subnets)+1)
-	cidrs = append(cidrs, c.config.ServiceClusterIPRange)
+	cidrs := make([]string, 0, len(subnets))
 	for _, subnet := range subnets {
 		if !subnet.Status.IsReady() || subnet.Spec.UnderlayGateway {
 			continue
@@ -267,49 +266,8 @@ func (c *Controller) reconcileRouters() error {
 		_, cidr, _ := net.ParseCIDR(r)
 		gw := net.ParseIP(gateway)
 		src := net.ParseIP(c.internalIP)
-		if r == c.config.ServiceClusterIPRange {
-			// svc for dualstack should be modified
-			if util.CheckProtocol(gateway) == kubeovnv1.ProtocolDual {
-				gws := strings.Split(gateway, ",")
-				v4gw := net.ParseIP(gws[0])
-				v6gw := net.ParseIP(gws[1])
-				if util.CheckProtocol(c.internalIP) == kubeovnv1.ProtocolIPv4 {
-					if err = netlink.RouteReplace(&netlink.Route{Dst: cidr, LinkIndex: nic.Attrs().Index, Scope: netlink.SCOPE_UNIVERSE, Gw: v4gw}); err != nil {
-						klog.Errorf("failed to add v4 svc route %v", err)
-					}
-				} else {
-					if err = netlink.RouteReplace(&netlink.Route{Dst: cidr, LinkIndex: nic.Attrs().Index, Scope: netlink.SCOPE_UNIVERSE, Gw: v6gw}); err != nil {
-						klog.Errorf("failed to add v6 svc route %v", err)
-					}
-				}
-			} else {
-				if err = netlink.RouteReplace(&netlink.Route{Dst: cidr, LinkIndex: nic.Attrs().Index, Scope: netlink.SCOPE_UNIVERSE, Gw: gw}); err != nil {
-					klog.Errorf("failed to add route %v", err)
-				}
-			}
-		} else {
-			// Since node's internalIP is IPv4 type, so skip v6 route for node. This check should be deleted when node support dualstack
-			if util.CheckProtocol(c.internalIP) != util.CheckProtocol(r) {
-				continue
-			}
-			if util.CheckProtocol(gateway) == kubeovnv1.ProtocolDual {
-				gws := strings.Split(gateway, ",")
-				v4gw := net.ParseIP(gws[0])
-				v6gw := net.ParseIP(gws[1])
-				if util.CheckProtocol(c.internalIP) == kubeovnv1.ProtocolIPv4 {
-					if err = netlink.RouteReplace(&netlink.Route{Dst: cidr, LinkIndex: nic.Attrs().Index, Scope: netlink.SCOPE_UNIVERSE, Gw: v4gw, Src: src}); err != nil {
-						klog.Errorf("v4 failed to add route %v", err)
-					}
-				} else {
-					if err = netlink.RouteReplace(&netlink.Route{Dst: cidr, LinkIndex: nic.Attrs().Index, Scope: netlink.SCOPE_UNIVERSE, Gw: v6gw, Src: src}); err != nil {
-						klog.Errorf("v6 failed to add route %v", err)
-					}
-				}
-			} else {
-				if err = netlink.RouteReplace(&netlink.Route{Dst: cidr, LinkIndex: nic.Attrs().Index, Scope: netlink.SCOPE_UNIVERSE, Gw: gw, Src: src}); err != nil {
-					klog.Errorf("failed to add route %v", err)
-				}
-			}
+		if err = netlink.RouteReplace(&netlink.Route{Dst: cidr, LinkIndex: nic.Attrs().Index, Scope: netlink.SCOPE_UNIVERSE, Gw: gw, Src: src}); err != nil {
+			klog.Errorf("failed to add route %v", err)
 		}
 	}
 	return err

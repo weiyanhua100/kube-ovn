@@ -528,15 +528,38 @@ func parseLrRouteListOutput(output string) (routeList []*StaticRoute, err error)
 	return routeList, nil
 }
 
-func (c Client) AddNatRule(policy, logicalIP, externalIP, router string) error {
-	var err error
-	if util.CheckProtocol(logicalIP) == kubeovnv1.ProtocolDual {
-		ips := strings.Split(logicalIP, ",")
-		_, err = c.ovnNbCommand(MayExist, "lr-nat-add", router, policy, externalIP, ips[0])
+func (c Client) UpdateNatRule(policy, logicalIP, externalIP, router string) error {
+	if policy == "snat" {
+		if externalIP == "" {
+			_, err := c.ovnNbCommand(IfExists, "lr-nat-del", router, "snat", logicalIP)
+			return err
+		}
+		_, err := c.ovnNbCommand(IfExists, "lr-nat-del", router, "snat", logicalIP, "--",
+			MayExist, "lr-nat-add", router, policy, externalIP, logicalIP)
+		return err
 	} else {
-		_, err = c.ovnNbCommand(MayExist, "lr-nat-add", router, policy, externalIP, logicalIP)
+		output, err := c.ovnNbCommand("--format=csv", "--no-heading", "--data=bare", "--columns=external_ip", "find", "NAT", fmt.Sprintf("logical_ip=%s", logicalIP), "type=dnat_and_snat")
+		if err != nil {
+			klog.Errorf("failed to list nat rules, %v", err)
+			return err
+		}
+		eips := strings.Split(output, "\n")
+		for _, eip := range eips {
+			eip = strings.TrimSpace(eip)
+			if eip == "" || eip == externalIP {
+				continue
+			}
+			if _, err := c.ovnNbCommand(IfExists, "lr-nat-del", router, "dnat_and_snat", eip); err != nil {
+				klog.Errorf("failed to delete nat rule, %v", err)
+				return err
+			}
+		}
+		if externalIP != "" {
+			_, err = c.ovnNbCommand(MayExist, "lr-nat-add", router, policy, externalIP, logicalIP)
+			return err
+		}
 	}
-	return err
+	return nil
 }
 
 func (c Client) DeleteNatRule(logicalIP, router string) error {
@@ -928,7 +951,7 @@ func (c Client) SetAddressesToAddressSet(addresses []string, as string) error {
 }
 
 // StartOvnNbctlDaemon start a daemon and set OVN_NB_DAEMON env
-func StartOvnNbctlDaemon(nbHost string, nbPort int) error {
+func StartOvnNbctlDaemon(ovnNbAddr string) error {
 	klog.Infof("start ovn-nbctl daemon")
 	output, err := exec.Command(
 		"pkill",
@@ -941,7 +964,7 @@ func StartOvnNbctlDaemon(nbHost string, nbPort int) error {
 	}
 	command := []string{
 		"ovn-nbctl",
-		fmt.Sprintf("--db=tcp:%s:%d", nbHost, nbPort),
+		fmt.Sprintf("--db=%s", ovnNbAddr),
 		"--pidfile",
 		"--detach",
 		"--overwrite-pidfile",
@@ -951,7 +974,7 @@ func StartOvnNbctlDaemon(nbHost string, nbPort int) error {
 			"-p", "/var/run/tls/key",
 			"-c", "/var/run/tls/cert",
 			"-C", "/var/run/tls/cacert",
-			fmt.Sprintf("--db=ssl:%s:%d", nbHost, nbPort),
+			fmt.Sprintf("--db=%s", ovnNbAddr),
 			"--pidfile",
 			"--detach",
 			"--overwrite-pidfile",

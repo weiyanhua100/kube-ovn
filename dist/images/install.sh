@@ -229,9 +229,6 @@ spec:
       served: true
       storage: true
       additionalPrinterColumns:
-      - name: Provider
-        type: string
-        jsonPath: .spec.provider
       - name: IP
         type: string
         jsonPath: .spec.ipAddress
@@ -298,6 +295,9 @@ spec:
       subresources:
         status: {}
       additionalPrinterColumns:
+      - name: Provider
+        type: string
+        jsonPath: .spec.provider
       - name: Vpc
         type: string
         jsonPath: .spec.vpc
@@ -687,8 +687,11 @@ spec:
                   fieldPath: metadata.namespace
           resources:
             requests:
-              cpu: 500m
+              cpu: 300m
               memory: 300Mi
+            limits:
+              cpu: 3
+              memory: 3Gi
           volumeMounts:
             - mountPath: /var/run/openvswitch
               name: host-run-ovs
@@ -746,8 +749,11 @@ spec:
                   fieldPath: metadata.namespace
           resources:
             requests:
-              cpu: 500m
-              memory: 300Mi
+              cpu: 200m
+              memory: 200Mi
+            limits:
+              cpu: 200m
+              memory: 200Mi
           volumeMounts:
             - mountPath: /var/run/openvswitch
               name: host-run-ovs
@@ -859,6 +865,8 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            - name: OVN_DB_IPS
+              value: $addresses
           volumeMounts:
             - mountPath: /lib/modules
               name: host-modules
@@ -1183,8 +1191,11 @@ spec:
                   fieldPath: metadata.namespace
           resources:
             requests:
-              cpu: 500m
-              memory: 300Mi
+              cpu: 300m
+              memory: 200Mi
+            limits:
+              cpu: 3
+              memory: 3Gi
           volumeMounts:
             - mountPath: /var/run/openvswitch
               name: host-run-ovs
@@ -1242,8 +1253,11 @@ spec:
                   fieldPath: metadata.namespace
           resources:
             requests:
-              cpu: 500m
-              memory: 300Mi
+              cpu: 200m
+              memory: 200Mi
+            limits:
+              cpu: 200m
+              memory: 200Mi
           volumeMounts:
             - mountPath: /var/run/openvswitch
               name: host-run-ovs
@@ -1356,6 +1370,8 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            - name: OVN_DB_IPS
+              value: $addresses
           volumeMounts:
             - mountPath: /lib/modules
               name: host-modules
@@ -1396,7 +1412,7 @@ spec:
           resources:
             requests:
               cpu: 200m
-              memory: 300Mi
+              memory: 200Mi
             limits:
               cpu: 1000m
               memory: 800Mi
@@ -1509,6 +1525,8 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            - name: OVN_DB_IPS
+              value: $addresses
           volumeMounts:
             - mountPath: /var/run/tls
               name: kube-ovn-tls
@@ -1528,6 +1546,13 @@ spec:
             periodSeconds: 7
             failureThreshold: 5
             timeoutSeconds: 45
+          resources:
+            requests:
+              cpu: 200m
+              memory: 200Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
       nodeSelector:
         kubernetes.io/os: "linux"
       volumes:
@@ -1631,6 +1656,13 @@ spec:
           initialDelaySeconds: 30
           periodSeconds: 7
           failureThreshold: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
       nodeSelector:
         kubernetes.io/os: "linux"
       volumes:
@@ -1727,7 +1759,7 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 300Mi
+              memory: 100Mi
             limits:
               cpu: 200m
               memory: 400Mi
@@ -1905,7 +1937,7 @@ trace(){
     exit 1
   fi
 
-  gwMac=$(kubectl exec -it $OVN_NB_POD -n $KUBE_OVN_NS -- ovn-nbctl --data=bare --no-heading --columns=mac find logical_router_port name=ovn-cluster-"$ls" | tr -d '\r')
+  gwMac=$(kubectl exec -it $OVN_NB_POD -n $KUBE_OVN_NS -c ovn-central -- ovn-nbctl --data=bare --no-heading --columns=mac find logical_router_port name=ovn-cluster-"$ls" | tr -d '\r')
 
   if [ -z "$gwMac" ]; then
     echo "get gw mac failed"
@@ -1923,11 +1955,11 @@ trace(){
   case $type in
     icmp)
       set -x
-      kubectl exec "$OVN_SB_POD" -n $KUBE_OVN_NS -- ovn-trace --ct=new "$ls" "inport == \"$podName.$namespace\" && ip.ttl == 64 && icmp && eth.src == $mac && ip4.src == $podIP && eth.dst == $gwMac && ip4.dst == $dst"
+      kubectl exec "$OVN_SB_POD" -n $KUBE_OVN_NS -c ovn-central -- ovn-trace --ct=new "$ls" "inport == \"$podName.$namespace\" && ip.ttl == 64 && icmp && eth.src == $mac && ip4.src == $podIP && eth.dst == $gwMac && ip4.dst == $dst"
       ;;
     tcp|udp)
       set -x
-      kubectl exec "$OVN_SB_POD" -n $KUBE_OVN_NS -- ovn-trace --ct=new "$ls" "inport == \"$podName.$namespace\" && ip.ttl == 64 && eth.src == $mac && ip4.src == $podIP && eth.dst == $gwMac && ip4.dst == $dst && $type.src == 10000 && $type.dst == $4"
+      kubectl exec "$OVN_SB_POD" -n $KUBE_OVN_NS -c ovn-central -- ovn-trace --ct=new "$ls" "inport == \"$podName.$namespace\" && ip.ttl == 64 && eth.src == $mac && ip4.src == $podIP && eth.dst == $gwMac && ip4.dst == $dst && $type.src == 10000 && $type.dst == $4"
       ;;
     *)
       echo "type $type not supported"
@@ -2092,10 +2124,10 @@ getOvnCentralPod
 
 case $subcommand in
   nbctl)
-    kubectl exec "$OVN_NB_POD" -n $KUBE_OVN_NS -- ovn-nbctl "$@"
+    kubectl exec "$OVN_NB_POD" -n $KUBE_OVN_NS -c ovn-central -- ovn-nbctl "$@"
     ;;
   sbctl)
-    kubectl exec "$OVN_SB_POD" -n $KUBE_OVN_NS -- ovn-sbctl "$@"
+    kubectl exec "$OVN_SB_POD" -n $KUBE_OVN_NS -c ovn-central -- ovn-sbctl "$@"
     ;;
   vsctl)
     vsctl "$@"

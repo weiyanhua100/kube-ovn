@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog"
+	"os"
 	"os/exec"
 	"reflect"
 	"strings"
@@ -225,9 +226,20 @@ func (c *Controller) startOVNIC(icHost, icNbPort, icSbPort string) error {
 	cmd := exec.Command("/usr/share/ovn/scripts/ovn-ctl",
 		fmt.Sprintf("--ovn-ic-nb-db=tcp:%s:%s", icHost, icNbPort),
 		fmt.Sprintf("--ovn-ic-sb-db=tcp:%s:%s", icHost, icSbPort),
-		fmt.Sprintf("--ovn-northd-nb-db=tcp:%s:%d", c.config.OvnNbHost, c.config.OvnNbPort),
-		fmt.Sprintf("--ovn-northd-sb-db=tcp:%s:%d", c.config.OvnSbHost, c.config.OvnSbPort),
+		fmt.Sprintf("--ovn-northd-nb-db=%s", c.config.OvnNbAddr),
+		fmt.Sprintf("--ovn-northd-sb-db=%s", c.config.OvnSbAddr),
 		"start_ic")
+	if os.Getenv("ENABLE_SSL") == "true" {
+		cmd = exec.Command("/usr/share/ovn/scripts/ovn-ctl",
+			fmt.Sprintf("--ovn-ic-nb-db=tcp:[%s]:%s", icHost, icNbPort),
+			fmt.Sprintf("--ovn-ic-sb-db=tcp:[%s]:%s", icHost, icSbPort),
+			fmt.Sprintf("--ovn-northd-nb-db=%s", c.config.OvnNbAddr),
+			fmt.Sprintf("--ovn-northd-sb-db=%s", c.config.OvnSbAddr),
+			"--ovn-ic-ssl-key=/var/run/tls/key",
+			"--ovn-ic-ssl-cert=/var/run/tls/cert",
+			"--ovn-ic-ssl-ca-cert=/var/run/tls/cacert",
+			"start_ic")
+	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", output)
